@@ -1,0 +1,45 @@
+IMPORTS {
+	import main.Account;
+	import main.User;
+}
+
+GLOBAL {
+	VARIABLES {
+		int userCnt = 0;
+	}
+	
+	TRIGGERS {
+	  adduser() = { Account a.addUser() exit() }
+	  deluser() = { Account a.deleteUser() exit() }
+	  allusers() = { User u.getName() exit() }
+	}
+	
+	PROPERTY users {
+	  STATES {
+			STARTING { start (ht_del); }
+	    BAD { toomany; baddel; }
+			NORMAL { ok (ht_del); }
+	  }
+		
+		TRANSITIONS {
+			start -> start [allusers\\]
+			start -> ok [adduser\\userCnt++;]
+			start -> baddel [deluser\\]
+			
+			ok -> ok [adduser \ userCnt <= 4 \ userCnt++;]
+			ok -> ok [deluser \ userCnt > 1 \ userCnt--;]
+			ok -> start [deluser \ userCnt == 1 \ userCnt--;]
+			ok -> ok [allusers]
+			ok -> toomany [adduser \ userCnt > 4 \]
+		}
+	}
+}
+
+HTRIPLES {
+	HT ht_del {
+		PRE { counter > 2 }
+		METHOD { Account.deleteUser }
+		POST { true }
+		ASSIGNABLE { \nothing }
+	}
+}

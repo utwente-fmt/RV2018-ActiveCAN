@@ -1,0 +1,124 @@
+IMPORTS {
+	import banking.Account;
+	import banking.Bank;
+	import banking.RuntimeMonitor;
+	import banking.Server;
+	import java.util.ArrayList;
+	import org.objectweb.proactive.api.PAActiveObject;
+}
+
+GLOBAL {
+	VARIABLES {
+		ArrayList<String> loggedin = new ArrayList<String>();
+		RuntimeMonitor monitor = null;
+	}
+
+	TRIGGERS {
+		init() = { Server s.initialised() exit() }
+		login(String name, boolean succ) = { execution Bank b.login(name, *) exit(succ) }
+		logout(String name) = { execution Bank b.logout(name) entry }
+		deposit(String name) = { execution Bank b.deposit(name, *) entry }
+		clientfail() = { execution RuntimeMonitor m.commitmentFailure() entry }
+	}
+
+	PROPERTY server {
+		STATES {
+			STARTING { init; }
+			ACCEPTING { ok; }
+			BAD { bad; }
+			NORMAL { working; }
+		}
+		
+		TRANSITIONS {
+			%% ------------------------
+			%% --- init transitions ---
+			%% ------------------------
+			
+			init -> working [init \\ {
+				monitor = createMonitor("servermonitor");
+			}]
+		
+			%% -------------------------
+			%% --- login transitions ---
+			%% -------------------------
+
+			working -> bad [login \ loggedin.contains(name) && succ \ {
+				monitor.commitmentFailure();
+				output("login should not have been successful");
+			}]
+			
+			working -> working [login \ succ \ {
+				loggedin.add(name);
+				output("login succeeded");
+			}]
+			
+			working -> working [login \ !succ \ {
+				output("login unsuccessful");
+			}]
+			
+			%% --------------------------
+			%% --- logout transitions ---
+			%% --------------------------
+			
+			working -> ok [logout \ !loggedin.contains(name) \ {
+				monitor.assumptionFailure();
+				output("assumption failure: logout attempt with user that is not logged in");
+			}]
+			
+			working -> working [logout \ loggedin.contains(name) \ {
+				loggedin.remove(name);
+				output("logout successful");
+			}]
+			
+			%% ---------------------------
+			%% --- deposit transitions ---
+			%% ---------------------------
+			
+			working -> ok [deposit \ !loggedin.contains(name) \ {
+				monitor.assumptionFailure();
+				output("assumption failure: logout attempt with user that is not logged in");
+			}]
+			
+			working -> working [deposit \ loggedin.contains(name) \ {
+				output("deposit has been processed");
+			}]
+			
+			%% -------------------------
+			%% --- other transitions ---
+			%% -------------------------
+			
+			working -> working [clientfail \ \ {
+				output("the client violated its commitments");
+			}]
+			
+			bad -> bad [clientfail \ \ {
+				output("the client violated its commitments");
+			}]
+			
+			ok -> ok [clientfail \ \ {
+				output("the client violated its commitments");
+			}]
+		}
+	}
+}
+
+METHODS {
+	void output(String msg) {
+		System.out.println(msg);
+	}
+	
+	RuntimeMonitor createMonitor(String hostname) {
+		RuntimeMonitor monitor = null;
+		
+		try {
+			output("initialisation - trying to set up the server runtime monitor...");
+			monitor = (RuntimeMonitor)PAActiveObject.newActive(RuntimeMonitor.class.getName(), null);
+			PAActiveObject.registerByName(monitor, hostname);
+			output("initialisation - done: the runtime monitor has been registered!");
+		} catch (Exception ex) {
+			output("initialisation - error: could not create and register runtime monitor!");
+		}
+		
+		return monitor;
+	}
+}

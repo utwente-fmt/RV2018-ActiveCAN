@@ -1,0 +1,36 @@
+IMPORTS {
+	import main.Hello;
+}
+
+GLOBAL {
+	TRIGGERS {
+		setvalue(int n) = { call Hello h.setValue(n) exit() }
+	}
+	
+	PROPERTY transitions {
+		STATES {
+			STARTING { working (ht_test); }
+		}
+		
+		TRANSITIONS {
+			working -> working [setvalue \ \ {
+				output("INFO - transition has been taken.");
+			}]
+		}
+	}
+}
+
+HTRIPLES {
+	HT ht_test {
+		PRE { true }
+		METHOD { Hello.go }
+		POST { i > 10 }
+		ASSIGNABLE { \nothing }
+	}
+}
+
+METHODS {
+	void output(String msg) {
+		System.out.println(msg);
+	}
+}

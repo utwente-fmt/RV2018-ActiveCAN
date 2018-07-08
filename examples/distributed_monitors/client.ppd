@@ -1,0 +1,101 @@
+IMPORTS {
+	import banking.Account;
+	import banking.Bank;
+	import banking.Client;
+	import banking.RuntimeMonitor;
+	import java.util.ArrayList;
+	import org.objectweb.proactive.api.PAActiveObject;
+}
+
+GLOBAL {
+	VARIABLES {
+		ArrayList<String> loggedin = new ArrayList<String>();
+		RuntimeMonitor monitor = null;
+	}
+	
+	TRIGGERS {
+		init() = { call Client c.initialised() exit() }
+		login(String name, boolean succ) = { call Bank b.login(name, *) exit(succ) }
+		logout(String name) = { call Bank b.logout(name) entry }
+		deposit(String name) = { call Bank b.deposit(name, *) entry }
+	}
+
+	PROPERTY server {
+		STATES {
+			STARTING { init; }
+			ACCEPTING { ok; }
+			BAD { bad; }
+			NORMAL { working; }
+		}
+		
+		TRANSITIONS {
+			%% ------------------------
+			%% --- init transitions ---
+			%% ------------------------
+			
+			init -> working [init \\ {
+				monitor = connectToMonitor("servermonitor");
+			}]
+		
+			%% -------------------------
+			%% --- login transitions ---
+			%% -------------------------
+
+			working -> working [login \ !succ \ {
+				output("login unsuccessful");
+			}]
+			
+			working -> working [login \ succ \ {
+				loggedin.add(name);
+				output("login successful");
+			}]
+			
+			%% --------------------------
+			%% --- logout transitions ---
+			%% --------------------------
+			
+			working -> bad [logout \ !loggedin.contains(name) \ {
+				monitor.commitmentFailure();
+				output("commitment failure : user is not logged in here");
+			}]
+			
+			working -> working [logout \ loggedin.contains(name) \ {
+				loggedin.remove(name);
+				output("logout successful");
+			}]
+			
+			%% ---------------------------
+			%% --- deposit transitions ---
+			%% ---------------------------
+			
+			working -> bad [deposit \ !loggedin.contains(name) \ {
+				monitor.commitmentFailure();
+				output("commitment failure : user is not logged in here");
+			}]
+			
+			working -> working [deposit \ loggedin.contains(name) \ {
+				output("deposit has been successfully processed");
+			}]
+		}
+	}
+}
+
+METHODS {
+	void output(String msg) {
+		System.out.println(msg);
+	}
+	
+	RuntimeMonitor connectToMonitor(String hostname) {
+		RuntimeMonitor monitor = null;
+		
+		try {
+			output("initialisation - trying to connect to the specified monitor...");
+			monitor = (RuntimeMonitor)PAActiveObject.lookupActive(RuntimeMonitor.class.getName(), hostname);
+			output("initialisation - successfully connected!");
+		} catch (Exception ex) {
+			output("initialisation - error: could not connect to the specified monitor!");
+		}
+		
+		return monitor;
+	}
+}

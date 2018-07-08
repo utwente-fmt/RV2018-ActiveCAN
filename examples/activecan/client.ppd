@@ -1,0 +1,213 @@
+IMPORTS {
+	import activecan.Client;
+	import activecan.JoinResponse;
+	import activecan.Key;
+	import activecan.Peer;
+	import activecan.Router;
+	import activecan.Zone;
+	import java.io.Serializable;
+	import java.util.ArrayList;
+	import java.util.HashMap;
+	import java.util.Map;
+	import monitoring.RuntimeMonitor;
+	import org.objectweb.proactive.api.PAActiveObject;
+}
+
+GLOBAL {
+	VARIABLES {
+		RuntimeMonitor globalstate = null;
+	}
+	
+	TRIGGERS {
+		initialised() = { call Client c.initialise() exit() }
+	}
+	
+	PROPERTY global {
+		STATES {
+			STARTING { init; }
+			NORMAL { active (ht_find_closest_neighbour, ht_find_closest_zone); }
+		}
+		
+		TRANSITIONS {
+			init -> active [initialised \\ {
+				globalstate = connectToMonitor("globalstate");
+			}]
+		}
+	}
+
+	FOREACH (Peer peer) {
+		VARIABLES {
+			Map<Key, Boolean> store = new HashMap<Key, Boolean>();
+		}
+	
+		TRIGGERS {
+			insertlocal(Key key, Serializable value) = { call Peer p.addLocal(key, value) exit() } where { peer = p; }
+			insertremote(Key key, Serializable value) = { call Peer p.addRemote(key, value) exit() } where { peer = p; }
+			lookuplocal(Key key, Serializable value) = { call Peer p.lookupLocal(key) exit(value) } where { peer = p; }
+			lookupremote(Key key, Serializable value) = { call Peer p.lookupRemote(key) exit(value) } where { peer = p; }
+		}
+		
+		PROPERTY transitions {
+			STATES {
+				STARTING { working; }
+				ACCEPTING { yourfault; }
+				BAD { myfault; }
+			}
+		
+			TRANSITIONS {
+				%% ----- local inserts -----
+			
+				working -> myfault [insertlocal \ key == null || value == null \ {
+					output("ERROR: trying to locally insert an incorrect key/value pair, key or value is null", peer);
+					globalstate.bad(p.getName());
+				}]
+				
+				working -> working [insertlocal \ !store.containsKey(key) \ {
+					store.put(key, Boolean.TRUE);
+					output("INFO: successfully inserted locally", peer);
+				}]
+				
+				working -> working [insertlocal \ store.containsKey(key) && islocal(key, store) \ {
+					output("INFO: successfully re-inserted locally", peer);
+				}]
+				
+				working -> myfault [insertlocal \ store.containsKey(key) && isremote(key, store) \ {
+					output("ERROR: trying to remotely insert a key that we have locally already (duplication found)", peer);
+					globalstate.bad(p.getName());
+				}]
+				
+				%% ----- remote inserts -----
+			
+				working -> myfault [insertremote \ key == null || value == null \ {
+					output("ERROR: trying to remotely insert an incorrect key/value pair, key or value is null", peer);
+					globalstate.bad(p.getName());
+				}]
+			
+				working -> working [insertremote \ !store.containsKey(key) \ store.put(key, Boolean.FALSE);]
+
+				working -> myfault [insertremote \ store.containsKey(key) && islocal(key, store) \ {
+					output("ERROR: routing error, causing duplicate data!", peer);
+					globalstate.bad(p.getName());
+				}]
+			
+				working -> working [insertremote \ store.containsKey(key) && isremote(key, store) \ {
+					output("INFO: successfully re-inserted remotely", peer);
+				}]
+
+				%% ----- local lookups -----
+			
+				working -> myfault [lookuplocal \ key == null \ {
+					output("ERROR: trying to locally lookup an incorrect key/value pair, key or value is null", peer);
+					globalstate.bad(p.getName());
+				}]
+			
+				working -> working [lookuplocal \ value == null && !store.containsKey(key) \ {
+					output("INFO: key/value pair not yet mapped in the hash table!", peer);
+				}]
+			
+				working -> myfault [lookuplocal \ value == null && store.containsKey(key) && islocal(key, store) \ {
+					output("ERROR: inconsistent view of the data!", peer);
+					globalstate.bad(p.getName());
+				}]
+			
+				working -> myfault [lookuplocal \ value == null && store.containsKey(key) && isremote(key, store) \ {
+					output("ERROR: routing error, looking up data that is on another peer!", peer);
+					globalstate.bad(p.getName());
+				}]
+			
+				working -> working [lookuplocal \ value != null && !store.containsKey(key) \ {
+					output("ERROR: retrieving local data we did not know we have (inconsistent view)!", peer);
+				}]
+			
+				working -> working [lookuplocal \ value != null && store.containsKey(key) && islocal(key, store) \ {
+					output("INFO: successfully looked up local data", peer);
+				}]
+			
+				working -> myfault [lookuplocal \ value != null && store.containsKey(key) && isremote(key, store) \ {
+					output("ERROR: inconsistent view of the data (duplication found)!", peer);
+					globalstate.bad(p.getName());
+				}]
+
+				%%% ----- remote lookups -----
+				
+				working -> myfault [lookupremote \ key == null \ {
+					output("ERROR: trying to remotely lookup an incorrect key/value pair, key or value is null", peer);
+					globalstate.bad(p.getName());
+				}]
+			
+				working -> working [lookupremote \ value == null && !store.containsKey(key) \ {
+					output("INFO: successful remote lookup, key/value pair not in mapped.", peer);
+				}]
+			
+				working -> myfault [lookupremote \ value == null && store.containsKey(key) && islocal(key, store) \ {
+					output("ERROR: routing error, the data is stored locally, yet looked-up remotely!", peer);
+					globalstate.bad(p.getName());
+				}]
+			
+				working -> yourfault [lookupremote \ value == null && store.containsKey(key) && isremote(key, store) \ {
+					output("ENVIRONMENT ERROR: lookup retrieved null, while we know for sure it should have returned some value!", peer);
+					globalstate.accepting(p.getName());
+				}]
+			
+				working -> working [lookupremote \ value != null && !store.containsKey(key) \ {
+					store.put(key, Boolean.FALSE);
+					output("INFO: successful remote lookup", peer);
+				}]
+			
+				working -> myfault [lookupremote \ value != null && store.containsKey(key) && islocal(key, store) \ {
+					output("ERROR: duplication, as this key is assigned locally, yet some remote node also has data associated to it!", peer);
+					globalstate.bad(p.getName());
+				}]
+			
+				working -> working [lookupremote \ value != null && store.containsKey(key) && isremote(key, store) \ {
+					output("INFO: successful remote lookup", peer);
+				}]
+			}
+		}
+	}
+}
+
+HTRIPLES {
+	%% when querying for a neighbour, one always gets a result
+	HT ht_find_closest_neighbour {
+		PRE { true }
+		METHOD { Router.getNeighbourClosestTo }
+		POST { \result != null }
+	}
+	
+	%% when querying for a neighbouring zone, one always gets a positive result that is _closer_ to the given position than the queried zone.
+	HT ht_find_closest_zone {
+		PRE { true }
+		METHOD { Router.getZoneClosestTo }
+		POST { \result != null && \result.distanceFromUnitSquare(x, y) < center.distanceFromUnitSquare(x, y) }
+	}
+}
+
+METHODS {
+	void output(String msg, Peer p) {
+		System.out.println(msg + " - peer info: " + p.toString());
+	}
+	
+	boolean islocal(Key key, Map<Key, Boolean> store) {
+		return store.get(key).booleanValue();
+	}
+	
+	boolean isremote(Key key, Map<Key, Boolean> store) {
+		return !store.get(key).booleanValue();
+	}
+	
+	RuntimeMonitor connectToMonitor(String hostname) {
+		RuntimeMonitor monitor = null;
+		
+		try {
+			System.out.println("INFO: initialisation - trying to connect to the specified monitor...");
+			monitor = (RuntimeMonitor)PAActiveObject.lookupActive(RuntimeMonitor.class.getName(), hostname);
+			monitor.clientConnected();
+			System.out.println("INFO: initialisation - successfully connected!");
+		} catch (Exception ex) {
+			System.out.println("ERROR: initialisation - could not connect to the specified monitor!");
+		}
+		
+		return monitor;
+	}
+}

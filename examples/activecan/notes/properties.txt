@@ -1,0 +1,16 @@
+What again are the properties of interest?
+- The 'lookup' and 'add' operations are handled either locally or remotely (but handled).
+- After calling 'add(k,v)', the data 'v' is stored somewhere in the network at key 'k'.
+	+ Every key 'k' has at most one peer that stores a value associated to that key.
+- If 'lookup(k)' returns a positive result, then 'k' is mapped somewhere in the network.
+- If 'lookup(k)' returns a negative result, then 'k' is not mapped in the network.
+- After splitting a zone into two (method 'Router::splitWith'), the resulting zones together are exactly the original zone (data property).
+	+ Invariant: the fragmented zones in the network together form the entire key/value space.
+	+ Zone splitting does not make certain parts of the state space unreachable. 
+	
+- There are no cycles in the routing protocol (i.e. the operations 'add' and 'lookup' always eventually terminate).
+	+ An 'add' or 'lookup' is either handled locally, or it has at least one neighbour (to defer the call to).
+	+ If an 'add' or 'lookup' is resolved remotely, it is resolved on a remote peer that is _closer_ to the target zone.
+
+What did I verify now?
+- The behaviour observed from the key/value store is consistent.

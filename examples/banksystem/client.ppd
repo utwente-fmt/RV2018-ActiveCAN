@@ -1,0 +1,72 @@
+IMPORTS {
+	import banking.Account;
+	import banking.Bank;
+	import banking.Client;
+	import java.util.ArrayList;
+}
+
+GLOBAL {
+	VARIABLES {
+		ArrayList<String> loggedin = new ArrayList<String>();
+	}
+	
+	TRIGGERS {
+		login(String name, boolean succ) = { call Bank b.login(name, *) exit(succ) }
+		logout(String name) = { call Bank b.logout(name) entry }
+		deposit(String name) = { call Bank b.deposit(name, *) entry }
+	}
+
+	PROPERTY server {
+		STATES {
+			STARTING { working; }
+			ACCEPTING { ok; }
+			BAD { bad; }
+		}
+		
+		TRANSITIONS {
+			%% -------------------------
+			%% --- login transitions ---
+			%% -------------------------
+
+			working -> working [login \ !succ \ {
+				output("login unsuccessful");
+			}]
+			
+			working -> working [login \ succ \ {
+				loggedin.add(name);
+				output("login successful");
+			}]
+			
+			%% --------------------------
+			%% --- logout transitions ---
+			%% --------------------------
+			
+			working -> bad [logout \ !loggedin.contains(name) \ {
+				output("commitment failure : user is not logged in here");
+			}]
+			
+			working -> working [logout \ loggedin.contains(name) \ {
+				loggedin.remove(name);
+				output("logout successful");
+			}]
+			
+			%% ---------------------------
+			%% --- deposit transitions ---
+			%% ---------------------------
+			
+			working -> bad [deposit \ !loggedin.contains(name) \ {
+				output("commitment failure : user is not logged in here");
+			}]
+			
+			working -> working [deposit \ loggedin.contains(name) \ {
+				output("deposit has been successfully processed");
+			}]
+		}
+	}
+}
+
+METHODS {
+	void output(String msg) {
+		System.out.println(msg);
+	}
+}
